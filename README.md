@@ -26,7 +26,7 @@ A generic Redis-based queue library for CodeIgniter 4 framework that provides re
 Install via Composer:
 
 ```bash
-composer require stietotalwin/redis-queue
+composer require stietotalwin/stw-sdk-php-redis-queue
 ```
 
 ## Configuration
