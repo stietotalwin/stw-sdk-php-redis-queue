@@ -1,0 +1,26 @@
+{
+    "name": "stietotalwin/stw-sdk-php-redis-queue",
+    "description": "Redis Queue library for CodeIgniter framework",
+    "type": "library",
+    "keywords": ["redis", "queue", "codeigniter", "php", "job", "background", "stw-sdk"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "StieTotalWin",
+            "email": "dev@stietotalwin.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "predis/predis": "^3.1",
+        "ramsey/uuid": "^4.2",
+        "codeigniter4/framework": "^4.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "StieTotalWin\\RedisQueue\\": "src/"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
