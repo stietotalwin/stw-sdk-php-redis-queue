@@ -7,9 +7,10 @@ class Consumer
     private $redisConnection;
     private $redis;
 
-    public function __construct(array $config)
+    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config)
     {
-        $this->redisConnection = RedisConnection::getInstance($config);
+        $redisConfig = $config->getRedisConfig();
+        $this->redisConnection = RedisConnection::getInstance($redisConfig);
         $this->redis = $this->redisConnection->getClient();
     }
 

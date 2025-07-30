@@ -10,109 +10,67 @@ use CodeIgniter\Config\BaseConfig;
 class RedisQueue extends BaseConfig
 {
     /**
-     * Default Redis connection host
+     * Redis connection scheme (tcp, tls, unix)
+     *
+     * @var string
+     */
+    public $scheme = 'tcp';
+
+    /**
+     * Redis connection host
      *
      * @var string
      */
     public $host = '127.0.0.1';
 
     /**
-     * Default Redis connection port
+     * Redis connection port
      *
      * @var int
      */
     public $port = 6379;
 
     /**
-     * Default Redis connection password
+     * Redis connection username
+     *
+     * @var string|null
+     */
+    public $username = null;
+
+    /**
+     * Redis connection password
      *
      * @var string|null
      */
     public $password = null;
 
     /**
-     * Default Redis database number
+     * Redis database number
      *
      * @var int
      */
     public $database = 0;
 
     /**
-     * Default Redis connection timeout
+     * Redis connection timeout
      *
      * @var int
      */
     public $timeout = 5;
 
     /**
-     * Cache Redis connection host
-     *
-     * @var string
-     */
-    public $cacheHost = '127.0.0.1';
-
-    /**
-     * Cache Redis connection port
+     * Redis read/write timeout
      *
      * @var int
      */
-    public $cachePort = 6379;
+    public $readWriteTimeout = 30;
 
     /**
-     * Cache Redis connection password
+     * Additional Redis parameters
      *
-     * @var string|null
+     * @var array
      */
-    public $cachePassword = null;
-
-    /**
-     * Cache Redis database number
-     *
-     * @var int
-     */
-    public $cacheDatabase = 1;
-
-    /**
-     * Cache Redis connection timeout
-     *
-     * @var int
-     */
-    public $cacheTimeout = 5;
-
-    /**
-     * Queue Redis connection host
-     *
-     * @var string
-     */
-    public $queueHost = '127.0.0.1';
-
-    /**
-     * Queue Redis connection port
-     *
-     * @var int
-     */
-    public $queuePort = 6379;
-
-    /**
-     * Queue Redis connection password
-     *
-     * @var string|null
-     */
-    public $queuePassword = null;
-
-    /**
-     * Queue Redis database number
-     *
-     * @var int
-     */
-    public $queueDatabase = 2;
-
-    /**
-     * Queue Redis connection timeout
-     *
-     * @var int
-     */
-    public $queueTimeout = 5;
+    public $parameters = [];
 
     /**
      * Default queue name
@@ -150,19 +108,37 @@ class RedisQueue extends BaseConfig
     public $cleanupInterval = 3600;
 
     /**
-     * Get queue Redis connection configuration
+     * Get Redis connection configuration
      *
      * @return array
      */
-    public function getQueueConfig(): array
+    public function getRedisConfig(): array
     {
-        return [
-            'host' => $this->queueHost,
-            'port' => $this->queuePort,
-            'password' => $this->queuePassword,
-            'database' => $this->queueDatabase,
-            'timeout' => $this->queueTimeout,
+        $config = [
+            'scheme' => $this->scheme,
+            'host' => $this->host,
+            'port' => $this->port,
+            'database' => $this->database,
+            'timeout' => $this->timeout,
         ];
+
+        if (!empty($this->username)) {
+            $config['username'] = $this->username;
+        }
+
+        if (!empty($this->password)) {
+            $config['password'] = $this->password;
+        }
+
+        if (!empty($this->readWriteTimeout)) {
+            $config['read_write_timeout'] = $this->readWriteTimeout;
+        }
+
+        if (!empty($this->parameters)) {
+            $config['parameters'] = $this->parameters;
+        }
+
+        return $config;
     }
 
     /**

@@ -30,10 +30,15 @@ class RedisConnection
     private function connect(): void
     {
         $redisConfig = [
+            'scheme' => $this->config['scheme'] ?? 'tcp',
             'host' => $this->config['host'] ?? '127.0.0.1',
             'port' => $this->config['port'] ?? 6379,
             'database' => $this->config['database'] ?? 0,
         ];
+
+        if (isset($this->config['username']) && !empty($this->config['username'])) {
+            $redisConfig['username'] = $this->config['username'];
+        }
 
         if (isset($this->config['password']) && !empty($this->config['password'])) {
             $redisConfig['password'] = $this->config['password'];
@@ -41,6 +46,14 @@ class RedisConnection
 
         if (isset($this->config['timeout'])) {
             $redisConfig['timeout'] = $this->config['timeout'];
+        }
+
+        if (isset($this->config['read_write_timeout'])) {
+            $redisConfig['read_write_timeout'] = $this->config['read_write_timeout'];
+        }
+
+        if (isset($this->config['parameters']) && is_array($this->config['parameters'])) {
+            $redisConfig['parameters'] = $this->config['parameters'];
         }
 
         $this->client = new Client($redisConfig);

@@ -13,6 +13,7 @@ A generic Redis-based queue library for CodeIgniter 4 framework that provides re
 - **Failed Job Handling**: Track and retry failed jobs
 - **Job Expiration**: Automatic cleanup of expired jobs
 - **CodeIgniter 4 Integration**: Built specifically for CodeIgniter 4 framework
+- **Unified Configuration**: Single Redis configuration for all operations
 
 ## Requirements
 
@@ -42,17 +43,48 @@ use StieTotalWin\RedisQueue\Config\RedisQueue as BaseRedisQueue;
 
 class RedisQueue extends BaseRedisQueue
 {
-    public $queueHost = '127.0.0.1';
-    public $queuePort = 6379;
-    public $queuePassword = null;
-    public $queueDatabase = 2;
-    public $queueTimeout = 5;
+    // Redis connection settings
+    public $scheme = 'tcp';              // or 'tls' for secure connections
+    public $host = '127.0.0.1';
+    public $port = 6379;
+    public $username = null;             // for Redis ACL authentication
+    public $password = null;
+    public $database = 0;
+    public $timeout = 5;
+    public $readWriteTimeout = 30;
+    public $parameters = [];             // Additional Predis parameters
     
+    // Queue settings
     public $defaultQueue = 'default';
     public $maxAttempts = 3;
     public $retryDelay = 60;
     public $jobTtl = 86400;
     public $cleanupInterval = 3600;
+}
+```
+
+### Configuration for Cloud Redis (e.g., Upstash)
+
+```php
+<?php
+
+namespace Config;
+
+use StieTotalWin\RedisQueue\Config\RedisQueue as BaseRedisQueue;
+
+class RedisQueue extends BaseRedisQueue
+{
+    public $scheme = 'tls';
+    public $host = 'your-redis-host.upstash.io';
+    public $port = 6379;
+    public $username = 'default';
+    public $password = 'your-redis-password';
+    public $database = 0;
+    public $readWriteTimeout = 30;
+    public $parameters = [
+        'timeout' => 30,
+        'read_write_timeout' => 30,
+    ];
 }
 ```
 
@@ -63,8 +95,8 @@ class RedisQueue extends BaseRedisQueue
 ```php
 use StieTotalWin\RedisQueue\Publisher;
 
-// Initialize publisher
-$config = config('RedisQueue')->getQueueConfig();
+// Initialize publisher with config
+$config = config('RedisQueue');
 $publisher = new Publisher($config, 'default');
 
 // Publish a simple job
@@ -97,8 +129,8 @@ $jobIds = $publisher->publishBulk($jobs, 'email_queue');
 ```php
 use StieTotalWin\RedisQueue\Consumer;
 
-// Initialize consumer
-$config = config('RedisQueue')->getQueueConfig();
+// Initialize consumer with same config
+$config = config('RedisQueue');
 $consumer = new Consumer($config);
 
 // Consume jobs from a queue
@@ -243,18 +275,22 @@ The library uses the following Redis data structures:
 
 ## Configuration Options
 
-| **Option**         | **Default**   | **Description**                                |
-|--------------------|---------------|------------------------------------------------|
-| `queueHost`        | `127.0.0.1`   | Redis server host                              |
-| `queuePort`        | `6379`        | Redis server port                              |
-| `queuePassword`    | `null`        | Redis password (if required)                   |
-| `queueDatabase`    | `2`           | Redis database number                          |
-| `queueTimeout`     | `5`           | Connection timeout in seconds                  |
-| `defaultQueue`     | `default`     | Default queue name                             |
-| `maxAttempts`      | `3`           | Maximum retry attempts for failed jobs         |
-| `retryDelay`       | `60`          | Base retry delay in seconds                    |
-| `jobTtl`           | `86400`       | Job time-to-live in seconds                    |
-| `cleanupInterval`  | `3600`        | Cleanup interval in seconds                    |
+| **Option**           | **Default**   | **Description**                                |
+|----------------------|---------------|------------------------------------------------|
+| `scheme`             | `tcp`         | Redis connection scheme (tcp, tls, unix)      |
+| `host`               | `127.0.0.1`   | Redis server host                              |
+| `port`               | `6379`        | Redis server port                              |
+| `username`           | `null`        | Redis username (for ACL authentication)       |
+| `password`           | `null`        | Redis password (if required)                   |
+| `database`           | `0`           | Redis database number                          |
+| `timeout`            | `5`           | Connection timeout in seconds                  |
+| `readWriteTimeout`   | `30`          | Read/write timeout in seconds                  |
+| `parameters`         | `[]`          | Additional Predis client parameters            |
+| `defaultQueue`       | `default`     | Default queue name                             |
+| `maxAttempts`        | `3`           | Maximum retry attempts for failed jobs        |
+| `retryDelay`         | `60`          | Base retry delay in seconds                    |
+| `jobTtl`             | `86400`       | Job time-to-live in seconds                    |
+| `cleanupInterval`    | `3600`        | Cleanup interval in seconds                    |
 
 ## Error Handling
 
@@ -273,6 +309,8 @@ The library provides robust error handling:
 4. **Set Appropriate TTL**: Configure job TTL based on your use case
 5. **Clean Up Regularly**: Use the cleanup functionality to remove expired jobs
 6. **Use Delays Wisely**: For time-sensitive jobs, use delays instead of immediate processing
+7. **Secure Connections**: Use TLS scheme for production Redis connections
+8. **Connection Pooling**: Consider using connection pooling for high-throughput applications
 
 ## License
 
@@ -280,4 +318,4 @@ This library is licensed under the MIT License. See the LICENSE file for details
 
 ## Support
 
-For issues and questions, please contact: <dev@stietotalwin.com>
+For issues and questions, please contact: <programmer@stietotalwin.com>

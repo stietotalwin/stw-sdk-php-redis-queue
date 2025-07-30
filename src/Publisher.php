@@ -11,9 +11,10 @@ class Publisher
     private $defaultQueue;
     private $currentQueue;
 
-    public function __construct(array $config, string $defaultQueue = 'default')
+    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config, string $defaultQueue = 'default')
     {
-        $this->redisConnection = RedisConnection::getInstance($config);
+        $redisConfig = $config->getRedisConfig();
+        $this->redisConnection = RedisConnection::getInstance($redisConfig);
         $this->redis = $this->redisConnection->getClient();
         $this->defaultQueue = $defaultQueue;
         $this->currentQueue = $defaultQueue;
