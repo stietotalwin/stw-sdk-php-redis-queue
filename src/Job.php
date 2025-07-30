@@ -18,7 +18,7 @@ class Job
     public function __construct(
         string $id,
         string $type,
-        array $data,
+        string $data,
         int $createdAt,
         int $processAt,
         int $attempts = 0,
@@ -44,7 +44,7 @@ class Job
         return new self(
             $jobData['id'],
             $jobData['type'],
-            $jobData['data'] ?? [],
+            $jobData['data'] ?? '',
             $jobData['created_at'],
             $jobData['process_at'],
             $jobData['attempts'] ?? 0,
@@ -81,7 +81,7 @@ class Job
         return $this->type;
     }
 
-    public function getData(): array
+    public function getData(): string
     {
         return $this->data;
     }

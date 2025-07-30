@@ -26,7 +26,7 @@ class Publisher
         return $this;
     }
 
-    public function publish(string $type, array $data, int $delay = 0, string $queue = null): string
+    public function publish(string $type, string $data, int $delay = 0, string $queue = null): string
     {
         $queueName = $queue ?? $this->currentQueue;
         $jobId = Uuid::uuid4()->toString();
@@ -61,7 +61,10 @@ class Publisher
                 continue;
             }
 
-            $jobIds[] = $this->publish($type, $data, $delay, $queueName);
+            // Ensure data is JSON encoded if it's an array
+            $dataString = is_array($data) ? json_encode($data) : $data;
+
+            $jobIds[] = $this->publish($type, $dataString, $delay, $queueName);
         }
 
         $this->currentQueue = $this->defaultQueue;

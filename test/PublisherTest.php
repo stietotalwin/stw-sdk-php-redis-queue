@@ -128,7 +128,7 @@ class PublisherTest
                 'priority' => 'normal'
             ];
             
-            $jobId = $this->publisher->publish($jobType, $jobData);
+            $jobId = $this->publisher->publish($jobType, json_encode($jobData));
             
             if (empty($jobId)) {
                 throw new \Exception("Job ID is empty");
@@ -169,12 +169,12 @@ class PublisherTest
         
         try {
             $jobType = 'delayed_notification';
-            $jobData = [
+            $jobData = json_encode([
                 'message' => 'This message should be processed in 5 minutes',
                 'created_at' => date('Y-m-d H:i:s'),
                 'priority' => 'high',
                 'retry_count' => 0
-            ];
+            ]);
             $delay = 300; // 5 minutes
             
             $jobId = $this->publisher->publish($jobType, $jobData, $delay);
@@ -299,8 +299,8 @@ class PublisherTest
         
         try {
             // Publish a few test messages
-            $this->publisher->publish('management_test_1', ['data' => 'test1', 'priority' => 'low']);
-            $this->publisher->publish('management_test_2', ['data' => 'test2', 'priority' => 'medium']);
+            $this->publisher->publish('management_test_1', json_encode(['data' => 'test1', 'priority' => 'low']));
+            $this->publisher->publish('management_test_2', json_encode(['data' => 'test2', 'priority' => 'medium']));
             
             if ($this->simulationMode) {
                 echo "✅ Queue management test completed in simulation mode\n";
@@ -362,7 +362,7 @@ class PublisherTest
                 ]
             ];
             
-            $jobId = $this->publisher->publish('large_payload_job', $largeData);
+            $jobId = $this->publisher->publish('large_payload_job', json_encode($largeData));
             
             if (empty($jobId)) {
                 throw new \Exception("Large payload job ID is empty");
@@ -387,7 +387,7 @@ class PublisherTest
                     throw new \Exception("Could not retrieve large payload job");
                 }
                 
-                $retrievedData = $job->getData();
+                $retrievedData = json_decode($job->getData(), true);
                 
                 if ($retrievedData['content'] !== $largeData['content']) {
                     throw new \Exception("Large content data mismatch");
@@ -521,7 +521,7 @@ class MockPublisher
         $this->testInstance = $testInstance;
     }
     
-    public function publish(string $type, array $data, int $delay = 0, string $queue = null): string
+    public function publish(string $type, string $data, int $delay = 0, string $queue = null): string
     {
         $jobId = 'sim_' . uniqid();
         $processAt = time() + $delay;
@@ -537,14 +537,17 @@ class MockPublisher
         
         foreach ($jobs as $jobData) {
             $type = $jobData['type'] ?? '';
-            $data = $jobData['data'] ?? [];
+            $data = $jobData['data'] ?? '';
             $delay = $jobData['delay'] ?? 0;
             
             if (empty($type)) {
                 continue;
             }
             
-            $jobIds[] = $this->publish($type, $data, $delay, $queue);
+            // Ensure data is JSON encoded if it's an array
+            $dataString = is_array($data) ? json_encode($data) : $data;
+            
+            $jobIds[] = $this->publish($type, $dataString, $delay, $queue);
         }
         
         return $jobIds;
