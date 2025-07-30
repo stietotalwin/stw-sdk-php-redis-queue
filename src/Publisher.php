@@ -111,7 +111,7 @@ class Publisher
         $queueNames = [];
 
         foreach ($keys as $key) {
-            if (!str_contains($key, ':')) {
+            if (strpos($key, ':') === false) {
                 $queueNames[] = $key;
             }
         }
@@ -124,7 +124,7 @@ class Publisher
         $queueName = $queue ?? $this->currentQueue;
 
         $removed = $this->redis->zrem($queueName, $jobId);
-        $this->redis->hdel($queueName . ':jobs', $jobId);
+        $this->redis->hdel($queueName . ':jobs', [$jobId]);
 
         return $removed > 0;
     }
