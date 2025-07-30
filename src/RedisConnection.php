@@ -33,27 +33,38 @@ class RedisConnection
             'scheme' => $this->config['scheme'] ?? 'tcp',
             'host' => $this->config['host'] ?? '127.0.0.1',
             'port' => $this->config['port'] ?? 6379,
-            'database' => $this->config['database'] ?? 0,
         ];
 
-        if (isset($this->config['username']) && !empty($this->config['username'])) {
-            $redisConfig['username'] = $this->config['username'];
+        // Add database only if specified (optional for cloud services)
+        if (isset($this->config['database'])) {
+            $redisConfig['database'] = $this->config['database'];
+        }
+
+        // Support 'user' field (used by Upstash and other cloud services)
+        if (isset($this->config['user']) && !empty($this->config['user'])) {
+            $redisConfig['username'] = $this->config['user'];
         }
 
         if (isset($this->config['password']) && !empty($this->config['password'])) {
             $redisConfig['password'] = $this->config['password'];
         }
 
-        if (isset($this->config['timeout'])) {
-            $redisConfig['timeout'] = $this->config['timeout'];
-        }
-
-        if (isset($this->config['read_write_timeout'])) {
-            $redisConfig['read_write_timeout'] = $this->config['read_write_timeout'];
-        }
-
+        // Use parameters array directly as per Predis documentation
         if (isset($this->config['parameters']) && is_array($this->config['parameters'])) {
             $redisConfig['parameters'] = $this->config['parameters'];
+        }
+
+        // Add SSL context for TLS connections (required for cloud services like Upstash)
+        if ($redisConfig['scheme'] === 'tls' || $redisConfig['scheme'] === 'rediss') {
+            if (!isset($redisConfig['parameters'])) {
+                $redisConfig['parameters'] = [];
+            }
+            $redisConfig['parameters']['ssl'] = [
+                'verify_peer' => false,
+                'verify_peer_name' => false,
+                'allow_self_signed' => true,
+                'crypto_method' => STREAM_CRYPTO_METHOD_TLS_CLIENT
+            ];
         }
 
         $this->client = new Client($redisConfig);

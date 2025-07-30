@@ -14,7 +14,7 @@ class RedisQueue extends BaseConfig
      *
      * @var string
      */
-    public $scheme = 'tcp';
+    public $scheme = 'tls';
 
     /**
      * Redis connection host
@@ -31,11 +31,11 @@ class RedisQueue extends BaseConfig
     public $port = 6379;
 
     /**
-     * Redis connection username
+     * Redis connection user (used by cloud services like Upstash)
      *
      * @var string|null
      */
-    public $username = null;
+    public $user = null;
 
     /**
      * Redis connection password
@@ -45,32 +45,21 @@ class RedisQueue extends BaseConfig
     public $password = null;
 
     /**
-     * Redis database number
+     * Redis database number (optional for cloud services)
      *
-     * @var int
+     * @var int|null
      */
-    public $database = 0;
+    public $database = null;
 
     /**
-     * Redis connection timeout
-     *
-     * @var int
-     */
-    public $timeout = 5;
-
-    /**
-     * Redis read/write timeout
-     *
-     * @var int
-     */
-    public $readWriteTimeout = 30;
-
-    /**
-     * Additional Redis parameters
+     * Additional Redis parameters including timeouts
      *
      * @var array
      */
-    public $parameters = [];
+    public $parameters = [
+        'timeout' => 30,
+        'read_write_timeout' => 30,
+    ];
 
     /**
      * Default queue name
@@ -118,20 +107,19 @@ class RedisQueue extends BaseConfig
             'scheme' => $this->scheme,
             'host' => $this->host,
             'port' => $this->port,
-            'database' => $this->database,
-            'timeout' => $this->timeout,
         ];
 
-        if (!empty($this->username)) {
-            $config['username'] = $this->username;
+        // Add database only if specified
+        if ($this->database !== null) {
+            $config['database'] = $this->database;
+        }
+
+        if (!empty($this->user)) {
+            $config['user'] = $this->user;
         }
 
         if (!empty($this->password)) {
             $config['password'] = $this->password;
-        }
-
-        if (!empty($this->readWriteTimeout)) {
-            $config['read_write_timeout'] = $this->readWriteTimeout;
         }
 
         if (!empty($this->parameters)) {
