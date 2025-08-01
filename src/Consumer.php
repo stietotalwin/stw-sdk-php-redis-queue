@@ -164,7 +164,7 @@ class Consumer
             if ($jobData) {
                 $job = Job::fromArray(json_decode($jobData, true));
                 if ($job->isExpired($maxAge)) {
-                    $this->redis->hdel($queueName . ':jobs', $jobId);
+                    $this->redis->hdel($queueName . ':jobs', [$jobId]);
                     $this->redis->zrem($queueName, $jobId);
                     $expiredCount++;
                 }
