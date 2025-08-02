@@ -14,48 +14,42 @@ class Consumer
         $this->redis = $this->redisConnection->getClient();
     }
 
-    public function consume(string $queueName): ?Job
+    public function consume(string $queueName, int $timeout = 10): ?Job
     {
-        $currentTime = time();
-        $maxRetries = 5;
+        $result = $this->redis->bzpopmin([$queueName], $timeout);
 
-        for ($i = 0; $i < $maxRetries; $i++) {
-            $jobs = $this->redis->zrangebyscore(
-                $queueName,
-                0,
-                $currentTime,
-                ['limit' => [0, 1]]
-            );
-
-            if (empty($jobs)) {
-                return null;
-            }
-
-            $jobId = $jobs[0];
-
-            $removed = $this->redis->zrem($queueName, $jobId);
-
-            if ($removed === 0) {
-                continue;
-            }
-
-            $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
-
-            if (!$jobData) {
-                continue;
-            }
-
-            $job = Job::fromArray(json_decode($jobData, true));
-
-            $this->redis->zadd($queueName . ':processing', [$jobId => time()]);
-
-            $job->setStatus('processing');
-            $this->updateJobData($job, $queueName);
-
-            return $job;
+        if ($result === null || empty($result)) {
+            return null;
         }
 
-        return null;
+        $queueData = $result[$queueName];
+        if (empty($queueData)) {
+            return null;
+        }
+
+        $jobId = array_keys($queueData)[0];
+        $score = (int) $queueData[$jobId];
+        $currentTime = time();
+
+        if ($score > $currentTime) {
+            $this->redis->zadd($queueName, [$jobId => $score]);
+            return null;
+        }
+
+        $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
+
+        if (!$jobData) {
+            return null;
+        }
+
+        $job = Job::fromArray(json_decode($jobData, true));
+
+        $this->redis->zadd($queueName . ':processing', [$jobId => time()]);
+
+        $job->setStatus('processing');
+        $this->updateJobData($job, $queueName);
+
+        return $job;
     }
 
     public function markCompleted(string $jobId, string $queueName): bool
