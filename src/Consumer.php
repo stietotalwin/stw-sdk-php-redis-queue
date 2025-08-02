@@ -16,14 +16,19 @@ class Consumer
 
     public function consume(string $queueName, int $timeout = 10): ?Job
     {
-        $result = $this->redis->bzpopmin([$queueName], $timeout);
+        // Suppress warnings from Predis when bzpopmin returns null on timeout
+        $result = @$this->redis->bzpopmin([$queueName], $timeout);
 
-        if ($result === null || empty($result)) {
+        if ($result === null || empty($result) || !is_array($result)) {
+            return null;
+        }
+
+        if (!isset($result[$queueName])) {
             return null;
         }
 
         $queueData = $result[$queueName];
-        if (empty($queueData)) {
+        if (empty($queueData) || !is_array($queueData)) {
             return null;
         }
 
