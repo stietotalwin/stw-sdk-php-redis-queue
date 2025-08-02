@@ -16,6 +16,9 @@ class Consumer
 
     public function consume(string $queueName, int $timeout = 10): ?Job
     {
+        // Check for data structure consistency and attempt recovery if needed
+        $this->ensureQueueConsistency($queueName);
+        
         // Suppress warnings from Predis when bzpopmin returns null on timeout
         $result = @$this->redis->bzpopmin([$queueName], $timeout);
 
@@ -207,5 +210,57 @@ class Consumer
     private function updateJobData(Job $job, string $queueName): void
     {
         $this->redis->hset($queueName . ':jobs', $job->getId(), json_encode($job->toArray()));
+    }
+
+    private function ensureQueueConsistency(string $queueName): void
+    {
+        $queueExists = $this->redis->exists($queueName);
+        $jobsHashKey = $queueName . ':jobs';
+        $jobsHashExists = $this->redis->exists($jobsHashKey);
+        
+        // If jobs hash exists but queue doesn't, attempt recovery
+        if (!$queueExists && $jobsHashExists) {
+            $this->recoverQueueFromJobs($queueName);
+        }
+    }
+
+    private function recoverQueueFromJobs(string $queueName): bool
+    {
+        $jobsHashKey = $queueName . ':jobs';
+        $jobIds = $this->redis->hkeys($jobsHashKey);
+        
+        if (empty($jobIds)) {
+            return false;
+        }
+
+        $currentTime = time();
+        $recoveredCount = 0;
+
+        foreach ($jobIds as $jobId) {
+            $jobData = $this->redis->hget($jobsHashKey, $jobId);
+            
+            if (!$jobData) {
+                continue;
+            }
+
+            $job = json_decode($jobData, true);
+            
+            if (!$job) {
+                continue;
+            }
+
+            // Use processAt time if available, otherwise use current time
+            $processAt = isset($job['processAt']) ? $job['processAt'] : $currentTime;
+            
+            // Add job to the sorted set with its process time as score
+            $this->redis->zadd($queueName, [$jobId => $processAt]);
+            $recoveredCount++;
+        }
+
+        if ($recoveredCount > 0) {
+            error_log("QUEUE RECOVERY: Restored $recoveredCount jobs to queue $queueName");
+        }
+
+        return $recoveredCount > 0;
     }
 }
