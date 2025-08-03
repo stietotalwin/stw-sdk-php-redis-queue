@@ -705,14 +705,12 @@ class Consumer
                 }
 
                 // Skip jobs that are already in the processing queue
-                // zscore returns the score if exists, false if not found
-                if ($this->redis->zscore($processingQueueKey, $jobId) !== false) {
+                if ($this->redis->zscore($processingQueueKey, $jobId)) {
                     continue; // Job is already being processed, don't recover it
                 }
 
                 // Skip jobs that are already in the main queue  
-                // zscore returns the score if exists, false if not found
-                if ($this->redis->zscore($queueName, $jobId) !== false) {
+                if ($this->redis->zscore($queueName, $jobId)) {
                     continue; // Job is already in main queue, don't duplicate it
                 }
 
