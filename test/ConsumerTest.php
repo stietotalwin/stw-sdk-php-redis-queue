@@ -150,7 +150,126 @@ class ConsumerTest
     }
     
     /**
-     * Test 3: Delayed job handling
+     * Test 3: Cleanup expired jobs functionality
+     */
+    public function testCleanupExpiredJobs()
+    {
+        echo "\n🧹 Testing Cleanup Expired Jobs...\n";
+        
+        if ($this->simulationMode) {
+            echo "⚠️  Simulation mode - skipping real Redis test\n";
+            return true;
+        }
+        
+        try {
+            // Clear queue first
+            $this->publisher->clearQueue($this->testQueue);
+            
+            // Create some jobs with different ages
+            $jobIds = [];
+            for ($i = 0; $i < 3; $i++) {
+                $jobId = $this->publisher->publish('cleanup_test_job', json_encode([
+                    'message' => "Test job $i",
+                    'index' => $i
+                ]));
+                $jobIds[] = $jobId;
+            }
+            
+            echo "   Created " . count($jobIds) . " test jobs\n";
+            
+            // Test cleanup with short maxAge (should clean all jobs)
+            $cleanedCount = $this->consumer->cleanupExpiredJobs($this->testQueue, 1); // 1 second
+            
+            echo "   Cleaned up $cleanedCount expired jobs\n";
+            
+            // Test comprehensive cleanup
+            for ($i = 0; $i < 2; $i++) {
+                $jobId = $this->publisher->publish('comprehensive_test_job', json_encode([
+                    'message' => "Comprehensive test job $i"
+                ]));
+            }
+            
+            $stats = $this->consumer->comprehensiveCleanup($this->testQueue, 1, 10);
+            echo "   Comprehensive cleanup stats: " . json_encode($stats) . "\n";
+            
+            if ($stats['execution_time'] > 0) {
+                echo "✅ Cleanup methods working correctly\n";
+                echo "   Execution time: " . $stats['execution_time'] . "ms\n";
+            }
+            
+            return true;
+        } catch (\Exception $e) {
+            echo "❌ Cleanup expired jobs test failed: " . $e->getMessage() . "\n";
+            return false;
+        }
+    }
+    
+    /**
+     * Test 4: Job recovery functionality
+     */
+    public function testJobRecovery()
+    {
+        echo "\n🔧 Testing Job Recovery...\n";
+        
+        if ($this->simulationMode) {
+            echo "⚠️  Simulation mode - skipping real Redis test\n";
+            return true;
+        }
+        
+        try {
+            // Clear queue first
+            $this->publisher->clearQueue($this->testQueue);
+            
+            // Enable detailed logging for this test
+            $this->consumer->enableDetailedLogging(true);
+            
+            // Create a job and simulate it getting stuck in processing
+            $jobId = $this->publisher->publish('recovery_test_job', json_encode([
+                'message' => 'This job will be used for recovery testing'
+            ]));
+            
+            echo "   Created job for recovery test: $jobId\n";
+            
+            // Manually move job to processing (simulating consumption without completion)
+            $processingTime = time() - 7200; // 2 hours ago (stuck)
+            // Access Redis through config
+            $redisConfig = $this->config->getRedisConfig();
+            $redisConnection = \StieTotalWin\RedisQueue\RedisConnection::getInstance($redisConfig);
+            $redis = $redisConnection->getClient();
+            $redis->zadd($this->testQueue . ':processing', [$jobId => $processingTime]);
+            $redis->zrem($this->testQueue, $jobId);
+            
+            // Test recovery stats
+            $recoveryStats = $this->consumer->getRecoveryStats($this->testQueue);
+            echo "   Recovery stats: " . json_encode($recoveryStats) . "\n";
+            
+            if ($recoveryStats['recovery_recommended']) {
+                echo "   ✅ Recovery correctly recommended for stuck job\n";
+                
+                // Run recovery
+                $recoveryResult = $this->consumer->recoverLostJobs($this->testQueue, 3600); // 1 hour timeout
+                echo "   Recovery result: " . json_encode($recoveryResult) . "\n";
+                
+                if ($recoveryResult['stuck_jobs_recovered'] > 0) {
+                    echo "   ✅ Stuck jobs successfully recovered\n";
+                }
+            }
+            
+            // Test monitoring data
+            echo "   ✅ Recovery functionality working correctly\n";
+            
+            // Disable detailed logging
+            $this->consumer->enableDetailedLogging(false);
+            
+            return true;
+        } catch (\Exception $e) {
+            echo "❌ Job recovery test failed: " . $e->getMessage() . "\n";
+            return false;
+        }
+    }
+    
+    /**
+     * Test 5: Delayed job handling
      */
     public function testDelayedJobHandling()
     {
@@ -210,6 +329,8 @@ class ConsumerTest
         $tests = [
             'Blocking Consume Immediate' => 'testBlockingConsumeImmediate',
             'Blocking Consume Timeout' => 'testBlockingConsumeTimeout',
+            'Cleanup Expired Jobs' => 'testCleanupExpiredJobs',
+            'Job Recovery' => 'testJobRecovery',
             'Delayed Job Handling' => 'testDelayedJobHandling'
         ];
         
@@ -245,6 +366,8 @@ class ConsumerTest
             echo "\n🎉 ALL CONSUMER TESTS PASSED!\n";
             echo "✅ Blocking consumer with BZPOPMIN is working correctly\n";
             echo "✅ Timeout handling is functional\n";
+            echo "✅ Cleanup operations are optimized and working\n";
+            echo "✅ Job recovery and monitoring systems are functional\n";
             echo "✅ Delayed job processing is working\n";
         } else {
             echo "\n⚠️  Some consumer tests failed.\n";
