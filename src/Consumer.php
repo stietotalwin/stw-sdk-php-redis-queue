@@ -4,8 +4,8 @@ namespace StieTotalWin\RedisQueue;
 
 class Consumer
 {
+    public $redis;
     private $redisConnection;
-    private $redis;
     private $detailedLogging = false;
 
     public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config)
