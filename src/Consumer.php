@@ -678,6 +678,7 @@ class Consumer
     private function recoverQueueFromJobs(string $queueName): bool
     {
         $jobsHashKey = $queueName . ':jobs';
+        $processingQueueKey = $queueName . ':processing';
         $currentTime = time();
         $recoveredCount = 0;
         $cursor = '0';
@@ -701,6 +702,18 @@ class Consumer
             foreach ($jobData as $jobId => $jobDataJson) {
                 if (!$jobDataJson) {
                     continue;
+                }
+
+                // Skip jobs that are already in the processing queue
+                $isProcessing = $this->redis->zscore($processingQueueKey, $jobId);
+                if ($isProcessing !== false) {
+                    continue; // Job is already being processed, don't recover it
+                }
+
+                // Skip jobs that are already in the main queue
+                $isInMainQueue = $this->redis->zscore($queueName, $jobId);
+                if ($isInMainQueue !== false) {
+                    continue; // Job is already in main queue, don't duplicate it
                 }
 
                 $job = json_decode($jobDataJson, true);
