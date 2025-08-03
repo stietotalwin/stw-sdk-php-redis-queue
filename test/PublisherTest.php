@@ -27,10 +27,10 @@ class PublisherTest
         $this->config = new class extends \StieTotalWin\RedisQueue\Config\RedisQueue {
             public function __construct() {
                 $this->scheme = 'tls';
-                $this->host = 'XXXXX.upstash.io';
+                $this->host = 'trusting-monitor-43059.upstash.io';
                 $this->port = 6379;
                 $this->user = 'default';
-                $this->password = 'XXXXX';
+                $this->password = 'AagzAAIjcDE1MDRiODhhMzc5Y2U0OThmYTQxNjIwNzM4MTJhMWI0MXAxMA';
                 $this->parameters = [
                     'timeout' => 30,
                     'read_write_timeout' => 30,
