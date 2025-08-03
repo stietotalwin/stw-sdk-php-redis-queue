@@ -15,8 +15,11 @@ class Consumer
         $this->redis = $this->redisConnection->getClient();
     }
 
-    public function consume(string $queueName, int $timeout = 10): ?Job
+    public function consume(string $queueName, int $timeout = 0): ?Job
     {
+        // Check for data structure consistency and attempt recovery if needed
+        $this->ensureQueueConsistency($queueName);
+
         $currentTime = time();
         
         // For blocking operation, we need to use bzpopmin outside Lua
@@ -201,6 +204,9 @@ class Consumer
             $jobs[] = Job::fromArray(json_decode($jobData, true));
         }
 
+        // Explicit cleanup for large datasets
+        unset($failedJobs);
+
         return $jobs;
     }
 
@@ -242,45 +248,79 @@ class Consumer
             }
         }
 
+        // Explicit cleanup for large datasets
+        unset($processingJobIds);
+
         return $jobs;
     }
 
     public function cleanupExpiredJobs(string $queueName, int $maxAge = 86400, int $batchSize = 100): int
     {
+        $this->checkMemoryUsage('cleanup start');
+        
         $expiredTime = time() - $maxAge;
         $this->redis->zremrangebyscore($queueName . ':processing', 0, $expiredTime);
 
-        $allJobIds = $this->redis->hkeys($queueName . ':jobs');
-        if (empty($allJobIds)) {
-            return 0;
-        }
-
         $expiredCount = 0;
-        $batches = array_chunk($allJobIds, $batchSize);
-
-        foreach ($batches as $batch) {
-            $jobDataBatch = $this->redis->hmget($queueName . ':jobs', $batch);
+        $cursor = '0';
+        $jobsHashKey = $queueName . ':jobs';
+        
+        do {
+            // Use HSCAN to iterate through jobs in batches without loading all keys
+            $result = $this->redis->hscan($jobsHashKey, $cursor, ['COUNT' => $batchSize]);
+            
+            if ($result === false || empty($result)) {
+                break;
+            }
+            
+            $cursor = $result[0];
+            $jobData = $result[1];
+            
+            if (empty($jobData)) {
+                continue;
+            }
+            
             $expiredJobIds = [];
-
-            for ($i = 0; $i < count($batch); $i++) {
-                $jobData = $jobDataBatch[$i];
-                if ($jobData) {
-                    $job = Job::fromArray(json_decode($jobData, true));
-                    if ($job->isExpired($maxAge)) {
-                        $expiredJobIds[] = $batch[$i];
+            
+            // Process each job in the current batch
+            foreach ($jobData as $jobId => $jobDataJson) {
+                if ($jobDataJson) {
+                    $decodedData = json_decode($jobDataJson, true);
+                    if ($decodedData) {
+                        $job = Job::fromArray($decodedData);
+                        if ($job->isExpired($maxAge)) {
+                            $expiredJobIds[] = $jobId;
+                        }
+                    } else {
+                        // Invalid JSON data, mark for cleanup
+                        $expiredJobIds[] = $jobId;
                     }
                 }
             }
 
+            // Clean up expired jobs from this batch
             if (!empty($expiredJobIds)) {
-                $this->redis->hdel($queueName . ':jobs', $expiredJobIds);
+                $this->redis->hdel($jobsHashKey, $expiredJobIds);
                 foreach ($expiredJobIds as $jobId) {
                     $this->redis->zrem($queueName, $jobId);
                 }
                 $expiredCount += count($expiredJobIds);
+                
+                // Explicit memory cleanup for large batches
+                unset($expiredJobIds);
             }
-        }
+            
+            // Explicit cleanup of current batch data
+            unset($jobData);
+            
+            // Check memory usage periodically during large operations
+            if ($expiredCount % ($batchSize * 10) === 0 && $expiredCount > 0) {
+                $this->checkMemoryUsage('cleanup progress');
+            }
+            
+        } while ($cursor !== '0');
 
+        $this->checkMemoryUsage('cleanup end');
         return $expiredCount;
     }
 
@@ -318,6 +358,8 @@ class Consumer
 
     public function recoverLostJobs(string $queueName, int $stuckTimeout = 3600): array
     {
+        $this->checkMemoryUsage('recovery start');
+        
         $currentTime = time();
         $stuckTime = $currentTime - $stuckTimeout;
         $recoveryStats = [
@@ -346,29 +388,56 @@ class Consumer
             }
         }
 
-        // Check for lost jobs in the :lost queue and attempt recovery
-        $lostJobs = $this->redis->lrange($queueName . ':lost', 0, -1);
+        // Check for lost jobs in the :lost queue and attempt recovery using pagination
+        $lostJobsBatchSize = 50; // Process lost jobs in smaller batches
+        $start = 0;
         
-        foreach ($lostJobs as $lostJobData) {
-            $lostJob = json_decode($lostJobData, true);
-            if ($lostJob && isset($lostJob['id'])) {
-                $jobId = $lostJob['id'];
-                $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
-                
-                if ($jobData) {
-                    // Job data still exists, restore to main queue
-                    $this->redis->zadd($queueName, [$jobId => $currentTime]);
-                    $this->redis->lrem($queueName . ':lost', 1, $lostJobData);
-                    $recoveryStats['lost_jobs_restored']++;
-                    error_log("RECOVERY: Lost job {$jobId} restored to main queue");
+        do {
+            $lostJobs = $this->redis->lrange($queueName . ':lost', $start, $start + $lostJobsBatchSize - 1);
+            
+            if (empty($lostJobs)) {
+                break;
+            }
+            
+            $processedInBatch = 0;
+            
+            foreach ($lostJobs as $lostJobData) {
+                $lostJob = json_decode($lostJobData, true);
+                if ($lostJob && isset($lostJob['id'])) {
+                    $jobId = $lostJob['id'];
+                    $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
+                    
+                    if ($jobData) {
+                        // Job data still exists, restore to main queue
+                        $this->redis->zadd($queueName, [$jobId => $currentTime]);
+                        $this->redis->lrem($queueName . ':lost', 1, $lostJobData);
+                        $recoveryStats['lost_jobs_restored']++;
+                        error_log("RECOVERY: Lost job {$jobId} restored to main queue");
+                        $processedInBatch++;
+                    }
                 }
             }
-        }
+            
+            // If we processed jobs, we need to adjust our start position
+            // since we removed items from the list
+            if ($processedInBatch > 0) {
+                // Start from the beginning again since list has changed
+                $start = 0;
+            } else {
+                // No jobs were processed, move to next batch
+                $start += $lostJobsBatchSize;
+            }
+            
+            // Explicit cleanup of batch data
+            unset($lostJobs);
+            
+        } while (true);
 
         if (array_sum($recoveryStats) > 0) {
             error_log("RECOVERY COMPLETE for queue {$queueName}: " . json_encode($recoveryStats));
         }
 
+        $this->checkMemoryUsage('recovery end');
         return $recoveryStats;
     }
 
@@ -415,7 +484,7 @@ class Consumer
 
     private function log(string $type, string $message, array $context = []): void
     {
-        if (!$this->detailedLogging && !in_array($type, ['ERROR', 'RECOVERY', 'JOB_LOST'])) {
+        if (!$this->detailedLogging && !in_array($type, ['ERROR', 'RECOVERY', 'JOB_LOST', 'MEMORY_WARNING'])) {
             return;
         }
 
@@ -427,9 +496,54 @@ class Consumer
         error_log($logMessage);
     }
 
+    /**
+     * Check memory usage and log warnings if approaching limits
+     */
+    private function checkMemoryUsage(string $operation = 'operation'): void
+    {
+        $memoryUsage = memory_get_usage(true);
+        $memoryLimit = ini_get('memory_limit');
+        
+        if ($memoryLimit !== '-1') {
+            $memoryLimitBytes = $this->convertToBytes($memoryLimit);
+            $memoryPercentage = ($memoryUsage / $memoryLimitBytes) * 100;
+            
+            if ($memoryPercentage > 80) {
+                $this->log('MEMORY_WARNING', "High memory usage during {$operation}", [
+                    'memory_usage_mb' => round($memoryUsage / 1024 / 1024, 2),
+                    'memory_limit' => $memoryLimit,
+                    'percentage_used' => round($memoryPercentage, 2)
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Convert PHP memory limit string to bytes
+     */
+    private function convertToBytes(string $value): int
+    {
+        $value = trim($value);
+        $unit = strtolower($value[strlen($value) - 1]);
+        $size = (int) $value;
+
+        switch ($unit) {
+            case 'g':
+                $size *= 1024;
+            case 'm':
+                $size *= 1024;
+            case 'k':
+                $size *= 1024;
+        }
+
+        return $size;
+    }
+
 
     public function comprehensiveCleanup(string $queueName, int $maxAge = 86400, int $batchSize = 100): array
     {
+        $this->checkMemoryUsage('comprehensive cleanup start');
+        
         $startTime = microtime(true);
         $stats = [
             'main_queue_cleaned' => 0,
@@ -440,41 +554,68 @@ class Consumer
         $expiredTime = time() - $maxAge;
         $this->redis->zremrangebyscore($queueName . ':processing', 0, $expiredTime);
 
-        $allJobIds = $this->redis->hkeys($queueName . ':jobs');
-        if (!empty($allJobIds)) {
-            $batches = array_chunk($allJobIds, $batchSize);
+        $cursor = '0';
+        $jobsHashKey = $queueName . ':jobs';
+        $totalExpiredCount = 0;
+        
+        do {
+            // Use HSCAN to iterate through jobs in batches without loading all keys
+            $result = $this->redis->hscan($jobsHashKey, $cursor, ['COUNT' => $batchSize]);
+            
+            if ($result === false || empty($result)) {
+                break;
+            }
+            
+            $cursor = $result[0];
+            $jobData = $result[1];
+            
+            if (empty($jobData)) {
+                continue;
+            }
+            
             $expiredJobIds = [];
-
-            foreach ($batches as $batch) {
-                $jobDataBatch = $this->redis->hmget($queueName . ':jobs', $batch);
-                
-                for ($i = 0; $i < count($batch); $i++) {
-                    $jobData = $jobDataBatch[$i];
-                    if ($jobData) {
-                        $job = Job::fromArray(json_decode($jobData, true));
+            
+            // Process each job in the current batch
+            foreach ($jobData as $jobId => $jobDataJson) {
+                if ($jobDataJson) {
+                    $decodedData = json_decode($jobDataJson, true);
+                    if ($decodedData) {
+                        $job = Job::fromArray($decodedData);
                         if ($job->isExpired($maxAge)) {
-                            $expiredJobIds[] = $batch[$i];
+                            $expiredJobIds[] = $jobId;
                         }
                     } else {
-                        $expiredJobIds[] = $batch[$i];
+                        // Invalid JSON data, mark for cleanup
+                        $expiredJobIds[] = $jobId;
                     }
+                } else {
+                    // Empty job data, mark for cleanup
+                    $expiredJobIds[] = $jobId;
                 }
             }
 
+            // Clean up expired jobs from this batch
             if (!empty($expiredJobIds)) {
-                $expiredBatches = array_chunk($expiredJobIds, $batchSize);
-                foreach ($expiredBatches as $expiredBatch) {
-                    $this->redis->hdel($queueName . ':jobs', $expiredBatch);
-                    foreach ($expiredBatch as $jobId) {
-                        $this->redis->zrem($queueName, $jobId);
-                    }
+                $this->redis->hdel($jobsHashKey, $expiredJobIds);
+                foreach ($expiredJobIds as $jobId) {
+                    $this->redis->zrem($queueName, $jobId);
                 }
-                $stats['job_data_cleaned'] = count($expiredJobIds);
-                $stats['main_queue_cleaned'] = count($expiredJobIds);
+                $totalExpiredCount += count($expiredJobIds);
+                
+                // Explicit memory cleanup for large batches
+                unset($expiredJobIds);
             }
-        }
+            
+            // Explicit cleanup of current batch data
+            unset($jobData);
+            
+        } while ($cursor !== '0');
 
+        $stats['job_data_cleaned'] = $totalExpiredCount;
+        $stats['main_queue_cleaned'] = $totalExpiredCount;
         $stats['execution_time'] = round((microtime(true) - $startTime) * 1000, 2);
+        
+        $this->checkMemoryUsage('comprehensive cleanup end');
         
         if ($stats['job_data_cleaned'] > 0) {
             error_log("CLEANUP STATS for queue {$queueName}: " . json_encode($stats));
@@ -494,6 +635,9 @@ class Consumer
                 $jobs[] = Job::fromArray(json_decode($jobData, true));
             }
         }
+
+        // Explicit cleanup for large datasets
+        unset($pendingJobIds);
 
         return $jobs;
     }
@@ -534,35 +678,49 @@ class Consumer
     private function recoverQueueFromJobs(string $queueName): bool
     {
         $jobsHashKey = $queueName . ':jobs';
-        $jobIds = $this->redis->hkeys($jobsHashKey);
-        
-        if (empty($jobIds)) {
-            return false;
-        }
-
         $currentTime = time();
         $recoveredCount = 0;
-
-        foreach ($jobIds as $jobId) {
-            $jobData = $this->redis->hget($jobsHashKey, $jobId);
+        $cursor = '0';
+        $batchSize = 100;
+        
+        do {
+            // Use HSCAN to iterate through jobs in batches without loading all keys
+            $result = $this->redis->hscan($jobsHashKey, $cursor, ['COUNT' => $batchSize]);
             
-            if (!$jobData) {
+            if ($result === false || empty($result)) {
+                break;
+            }
+            
+            $cursor = $result[0];
+            $jobData = $result[1];
+            
+            if (empty($jobData)) {
                 continue;
             }
 
-            $job = json_decode($jobData, true);
-            
-            if (!$job) {
-                continue;
-            }
+            foreach ($jobData as $jobId => $jobDataJson) {
+                if (!$jobDataJson) {
+                    continue;
+                }
 
-            // Use processAt time if available, otherwise use current time
-            $processAt = isset($job['processAt']) ? $job['processAt'] : $currentTime;
+                $job = json_decode($jobDataJson, true);
+                
+                if (!$job) {
+                    continue;
+                }
+
+                // Use processAt time if available, otherwise use current time
+                $processAt = $job['processAt'] ?? $currentTime;
+                
+                // Add job to the sorted set with its process time as score
+                $this->redis->zadd($queueName, [$jobId => $processAt]);
+                $recoveredCount++;
+            }
             
-            // Add job to the sorted set with its process time as score
-            $this->redis->zadd($queueName, [$jobId => $processAt]);
-            $recoveredCount++;
-        }
+            // Explicit cleanup of current batch data
+            unset($jobData);
+            
+        } while ($cursor !== '0');
 
         if ($recoveredCount > 0) {
             error_log("QUEUE RECOVERY: Restored $recoveredCount jobs to queue $queueName");
