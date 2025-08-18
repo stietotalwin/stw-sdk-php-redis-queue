@@ -6,18 +6,18 @@ use Ramsey\Uuid\Uuid;
 
 class Publisher
 {
+    public $redis;
     private $redisConnection;
-    private $redis;
     private $defaultQueue;
     private $currentQueue;
 
     public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config, string $defaultQueue = 'default')
     {
-        $redisConfig = $config->getRedisConfig();
+        $redisConfig           = $config->getRedisConfig();
         $this->redisConnection = RedisConnection::getInstance($redisConfig);
-        $this->redis = $this->redisConnection->getClient();
-        $this->defaultQueue = $defaultQueue;
-        $this->currentQueue = $defaultQueue;
+        $this->redis           = $this->redisConnection->getClient();
+        $this->defaultQueue    = $defaultQueue;
+        $this->currentQueue    = $defaultQueue;
     }
 
     public function setQueue(string $queueName): self
@@ -29,7 +29,7 @@ class Publisher
     public function publish(string $type, string $data, int $delay = 0, string $queue = null): string
     {
         $queueName = $queue ?? $this->currentQueue;
-        $jobId = Uuid::uuid4()->toString();
+        $jobId     = Uuid::uuid4()->toString();
         $timestamp = time();
 
         try {
@@ -56,11 +56,11 @@ class Publisher
     public function publishBulk(array $jobs, string $queue = null): array
     {
         $queueName = $queue ?? $this->currentQueue;
-        $jobIds = [];
+        $jobIds    = [];
 
         foreach ($jobs as $jobData) {
-            $type = $jobData['type'] ?? '';
-            $data = $jobData['data'] ?? [];
+            $type  = $jobData['type'] ?? '';
+            $data  = $jobData['data'] ?? [];
             $delay = $jobData['delay'] ?? 0;
 
             if (empty($type)) {
@@ -83,27 +83,27 @@ class Publisher
         $queueName = $queue ?? $this->currentQueue;
 
         try {
-            $pendingJobs = $this->redis->zcard($queueName);
+            $pendingJobs    = $this->redis->zcard($queueName);
             $processingJobs = $this->redis->zcard($queueName . ':processing');
-            $failedJobs = $this->redis->llen($queueName . ':failed');
-            $totalJobData = $this->redis->hlen($queueName . ':jobs');
+            $failedJobs     = $this->redis->llen($queueName . ':failed');
+            $totalJobData   = $this->redis->hlen($queueName . ':jobs');
 
             return [
-                'queue_name' => $queueName,
-                'pending_jobs' => $pendingJobs,
+                'queue_name'      => $queueName,
+                'pending_jobs'    => $pendingJobs,
                 'processing_jobs' => $processingJobs,
-                'failed_jobs' => $failedJobs,
-                'total_job_data' => $totalJobData
+                'failed_jobs'     => $failedJobs,
+                'total_job_data'  => $totalJobData
             ];
         } catch (\Exception $e) {
             error_log("Redis getQueueStats error for queue {$queueName}: " . $e->getMessage());
             return [
-                'queue_name' => $queueName,
-                'pending_jobs' => 0,
+                'queue_name'      => $queueName,
+                'pending_jobs'    => 0,
                 'processing_jobs' => 0,
-                'failed_jobs' => 0,
-                'total_job_data' => 0,
-                'error' => $e->getMessage()
+                'failed_jobs'     => 0,
+                'total_job_data'  => 0,
+                'error'           => $e->getMessage()
             ];
         }
     }
@@ -128,7 +128,7 @@ class Publisher
     public function getJobCount(string $queue = null): int
     {
         $queueName = $queue ?? $this->currentQueue;
-        
+
         try {
             return $this->redis->zcard($queueName);
         } catch (\Exception $e) {
@@ -142,7 +142,7 @@ class Publisher
         try {
             // Note: keys('*') can be slow on large Redis instances
             // Consider using SCAN in production environments
-            $keys = $this->redis->keys('*');
+            $keys       = $this->redis->keys('*');
             $queueNames = [];
 
             foreach ($keys as $key) {
@@ -165,7 +165,7 @@ class Publisher
         try {
             $removed = $this->redis->zrem($queueName, $jobId);
             $this->redis->hdel($queueName . ':jobs', [$jobId]); // Fixed: restored array brackets
-            
+
             return $removed > 0;
         } catch (\Exception $e) {
             error_log("Redis deleteJob error for job {$jobId}: " . $e->getMessage());
@@ -176,7 +176,7 @@ class Publisher
     public function getJob(string $jobId, string $queue = null): ?Job
     {
         $queueName = $queue ?? $this->currentQueue;
-        
+
         try {
             $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
 
@@ -199,8 +199,8 @@ class Publisher
 
     public function republishStuckJobs(string $queue = null, int $stuckMinutes = 10): int
     {
-        $queueName = $queue ?? $this->currentQueue;
-        $stuckTime = time() - ($stuckMinutes * 60);
+        $queueName        = $queue ?? $this->currentQueue;
+        $stuckTime        = time() - ($stuckMinutes * 60);
         $republishedCount = 0;
 
         // Get all processing jobs that have been stuck for more than the specified time
@@ -208,7 +208,7 @@ class Publisher
 
         foreach ($stuckJobIds as $jobId) {
             $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
-            
+
             if (!$jobData) {
                 // Clean up orphaned processing job
                 $this->redis->zrem($queueName . ':processing', $jobId);
@@ -216,21 +216,21 @@ class Publisher
             }
 
             $job = Job::fromArray(json_decode($jobData, true));
-            
+
             // Reset job for republishing
             $job->setStatus('pending');
             $job->setProcessAt(time()); // Process immediately
             $job->incrementAttempts();
-            
+
             // Remove from processing queue
             $this->redis->zrem($queueName . ':processing', $jobId);
-            
+
             // Add back to main queue for immediate processing
             $this->redis->zadd($queueName, [$job->getId() => $job->getProcessAt()]);
-            
+
             // Update job data
             $this->redis->hset($queueName . ':jobs', $job->getId(), json_encode($job->toArray()));
-            
+
             $republishedCount++;
         }
 
@@ -248,9 +248,9 @@ class Publisher
 
         foreach ($stuckJobIds as $jobId) {
             $jobData = $this->redis->hget($queueName . ':jobs', $jobId);
-            
+
             if ($jobData) {
-                $job = Job::fromArray(json_decode($jobData, true));
+                $job         = Job::fromArray(json_decode($jobData, true));
                 $stuckJobs[] = $job;
             }
         }
@@ -263,11 +263,11 @@ class Publisher
         try {
             $this->redis->zadd($queueName, [$job->getId() => $job->getProcessAt()]);
             $jobData = json_encode($job->toArray());
-            
+
             if ($jobData === false) {
                 throw new \Exception("Failed to JSON encode job data");
             }
-            
+
             $this->redis->hset($queueName . ':jobs', $job->getId(), $jobData);
         } catch (\Exception $e) {
             error_log("Redis addJobToQueue error for job {$job->getId()}: " . $e->getMessage());
