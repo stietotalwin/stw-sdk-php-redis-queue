@@ -41,7 +41,7 @@ class Consumer
 
         $jobId = array_keys($queueData)[0];
         $score = (int) $queueData[$jobId];
-        
+
         // Lua script for atomic validation and processing
         $luaScript = '
             local queueName = ARGV[1]
@@ -50,25 +50,35 @@ class Consumer
             local currentTime = tonumber(ARGV[4])
             local processingQueue = queueName .. ":processing"
             local jobsHash = queueName .. ":jobs"
-            
+            local missingAttemptsHash = queueName .. ":missing_attempts"
+            local maxMissingAttempts = 3
+
             -- Check if job is ready
             if score > currentTime then
                 -- Put it back, not ready yet
                 redis.call("ZADD", queueName, score, jobId)
                 return {"requeued", jobId, score}
             end
-            
+
             -- Check if job data exists
             local jobData = redis.call("HGET", jobsHash, jobId)
             if not jobData then
-                -- Job data missing, put back for potential recovery
-                redis.call("ZADD", queueName, currentTime, jobId)
-                return {"missing", jobId}
+                -- Job data missing - track attempts to prevent infinite loops
+                local missingAttempts = tonumber(redis.call("HINCRBY", missingAttemptsHash, jobId, 1)) or 1
+
+                if missingAttempts >= maxMissingAttempts then
+                    -- Too many missing data attempts, mark as permanently missing
+                    return {"permanently_missing", jobId, missingAttempts}
+                else
+                    -- Requeue for recovery attempt
+                    redis.call("ZADD", queueName, currentTime, jobId)
+                    return {"missing", jobId, missingAttempts}
+                end
             end
-            
+
             -- Move to processing queue atomically
             redis.call("ZADD", processingQueue, currentTime, jobId)
-            
+
             return {"consumed", jobId, jobData}
         ';
         
@@ -81,15 +91,30 @@ class Consumer
             
             $status = $result[0];
             $jobId = $result[1];
-            
+
             switch ($status) {
                 case 'requeued':
                     $score = $result[2];
                     $this->log("JOB_REQUEUED", "Job not ready, requeued", ['job_id' => $jobId, 'score' => $score]);
                     return null;
-                    
+
                 case 'missing':
-                    $this->log("JOB_LOST", "Job data missing from hash, requeued for recovery", ['job_id' => $jobId]);
+                    $attemptCount = $result[2] ?? 'unknown';
+                    $this->log("JOB_LOST", "Job data missing from hash, requeued for recovery", ['job_id' => $jobId, 'attempt' => $attemptCount, 'max_attempts' => 3]);
+                    return null;
+
+                case 'permanently_missing':
+                    $attemptCount = $result[2] ?? 'unknown';
+                    $this->log("ERROR", "Job data permanently missing after multiple recovery attempts, moving to failed queue", ['job_id' => $jobId, 'attempts' => $attemptCount]);
+                    // Move to failed queue to prevent infinite loop
+                    $this->redis->lpush($queueName . ':failed', [json_encode([
+                        'id' => $jobId,
+                        'error' => 'Job data permanently missing - not found in job data hash after ' . $attemptCount . ' recovery attempts',
+                        'failed_at' => time(),
+                        'failure_type' => 'missing_data'
+                    ])]);
+                    // Clean up the missing attempts counter
+                    $this->redis->hdel($queueName . ':missing_attempts', [$jobId]);
                     return null;
                     
                 case 'consumed':
@@ -159,6 +184,8 @@ class Consumer
     {
         $this->redis->zrem($queueName . ':processing', $jobId);
         $this->redis->hdel($queueName . ':jobs', [$jobId]);
+        // Clean up missing attempts counter if it exists
+        $this->redis->hdel($queueName . ':missing_attempts', [$jobId]);
 
         return true;
     }
@@ -191,6 +218,8 @@ class Consumer
         }
 
         $this->updateJobData($job, $queueName);
+        // Clean up missing attempts counter if it exists
+        $this->redis->hdel($queueName . ':missing_attempts', [$jobId]);
 
         return true;
     }
