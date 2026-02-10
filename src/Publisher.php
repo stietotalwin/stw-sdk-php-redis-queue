@@ -6,7 +6,7 @@ use Ramsey\Uuid\Uuid;
 
 class Publisher
 {
-    public $redis;
+    private $redis;
     private $redisConnection;
     private $defaultQueue;
     private $currentQueue;
@@ -140,16 +140,25 @@ class Publisher
     public function getQueueNames(): array
     {
         try {
-            // Note: keys('*') can be slow on large Redis instances
-            // Consider using SCAN in production environments
-            $keys       = $this->redis->keys('*');
             $queueNames = [];
+            $cursor = '0';
 
-            foreach ($keys as $key) {
-                if (strpos($key, ':') === false) {
-                    $queueNames[] = $key;
+            do {
+                $result = $this->redis->scan($cursor, ['COUNT' => 100]);
+
+                if ($result === false || empty($result)) {
+                    break;
                 }
-            }
+
+                $cursor = $result[0];
+                $keys = $result[1];
+
+                foreach ($keys as $key) {
+                    if (strpos($key, ':') === false) {
+                        $queueNames[] = $key;
+                    }
+                }
+            } while ($cursor !== '0');
 
             return array_unique($queueNames);
         } catch (\Exception $e) {

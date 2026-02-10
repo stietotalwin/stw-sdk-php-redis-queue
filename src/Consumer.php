@@ -4,7 +4,7 @@ namespace StieTotalWin\RedisQueue;
 
 class Consumer
 {
-    public $redis;
+    private $redis;
     private $redisConnection;
     private $detailedLogging = false;
 
@@ -24,7 +24,7 @@ class Consumer
         
         // For blocking operation, we need to use bzpopmin outside Lua
         // but we can make the validation and processing atomic
-        $result = @$this->redis->bzpopmin([$queueName], $timeout);
+        $result = $this->redis->bzpopmin([$queueName], $timeout);
 
         if ($result === null || empty($result) || !is_array($result)) {
             return null;
@@ -211,9 +211,10 @@ class Consumer
             $job->setProcessAt(time() + $retryDelay);
             $job->setStatus('retrying');
 
+            $this->redis->zrem($queueName . ':processing', $jobId);
             $this->redis->zadd($queueName, [$job->getId() => $job->getProcessAt()]);
         } else {
-            $this->redis->lpush($queueName . ':failed', $job->toArray());
+            $this->redis->lpush($queueName . ':failed', [json_encode($job->toArray())]);
             $this->redis->zrem($queueName . ':processing', $jobId);
         }
 
@@ -750,7 +751,7 @@ class Consumer
                 }
 
                 // Use processAt time if available, otherwise use current time
-                $processAt = $job['processAt'] ?? $currentTime;
+                $processAt = $job['process_at'] ?? $currentTime;
                 
                 // Add job to the sorted set with its process time as score
                 $this->redis->zadd($queueName, [$jobId => $processAt]);

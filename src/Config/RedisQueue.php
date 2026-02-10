@@ -14,7 +14,7 @@ class RedisQueue extends BaseConfig
      *
      * @var string
      */
-    public $scheme = 'tls';
+    public $scheme = 'tcp';
 
     /**
      * Redis connection host
