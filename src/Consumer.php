@@ -51,7 +51,15 @@ class Consumer
         
         // For blocking operation, we need to use bzpopmin outside Lua
         // but we can make the validation and processing atomic
-        $result = $this->redis->bzpopmin([$queueName], $timeout);
+        // Wrap in try-catch to handle Predis bug where BZPOPMIN timeout
+        // returns null and triggers array_shift() error in parseResponse()
+        try {
+            $result = $this->redis->bzpopmin([$queueName], $timeout);
+        } catch (\Exception $e) {
+            // Predis throws when BZPOPMIN times out (nil response)
+            // This is expected behavior - no jobs available
+            return null;
+        }
 
         if ($result === null || empty($result) || !is_array($result)) {
             return null;
