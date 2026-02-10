@@ -62,6 +62,17 @@ class RedisQueue extends BaseConfig
     ];
 
     /**
+     * SSL/TLS verification settings for secure connections
+     *
+     * @var array
+     */
+    public $ssl = [
+        'verify_peer' => true,
+        'verify_peer_name' => true,
+        'allow_self_signed' => false,
+    ];
+
+    /**
      * Default queue name
      *
      * @var string
@@ -124,6 +135,10 @@ class RedisQueue extends BaseConfig
 
         if (!empty($this->parameters)) {
             $config['parameters'] = $this->parameters;
+        }
+
+        if (!empty($this->ssl)) {
+            $config['ssl'] = $this->ssl;
         }
 
         return $config;

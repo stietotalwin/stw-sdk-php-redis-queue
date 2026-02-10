@@ -10,14 +10,16 @@ class Publisher
     private $redisConnection;
     private $defaultQueue;
     private $currentQueue;
+    private $logger;
 
-    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config, string $defaultQueue = 'default')
+    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config, string $defaultQueue = 'default', LoggerInterface $logger = null)
     {
         $redisConfig           = $config->getRedisConfig();
         $this->redisConnection = RedisConnection::getInstance($redisConfig);
         $this->redis           = $this->redisConnection->getClient();
         $this->defaultQueue    = $defaultQueue;
         $this->currentQueue    = $defaultQueue;
+        $this->logger          = $logger ?? new DefaultLogger();
     }
 
     public function setQueue(string $queueName): self
@@ -47,7 +49,7 @@ class Publisher
 
             return $jobId;
         } catch (\Exception $e) {
-            error_log("Redis publish error for job type {$type}: " . $e->getMessage());
+            $this->logger->error("Publish error", ["type" => $type, "error" => $e->getMessage()]);
             $this->currentQueue = $this->defaultQueue;
             throw $e;
         }
@@ -96,7 +98,7 @@ class Publisher
                 'total_job_data'  => $totalJobData
             ];
         } catch (\Exception $e) {
-            error_log("Redis getQueueStats error for queue {$queueName}: " . $e->getMessage());
+            $this->logger->error("Queue stats error", ["queue" => $queueName, "error" => $e->getMessage()]);
             return [
                 'queue_name'      => $queueName,
                 'pending_jobs'    => 0,
@@ -120,7 +122,7 @@ class Publisher
 
             return true;
         } catch (\Exception $e) {
-            error_log("Redis clearQueue error for queue {$queueName}: " . $e->getMessage());
+            $this->logger->error("Clear queue error", ["queue" => $queueName, "error" => $e->getMessage()]);
             return false;
         }
     }
@@ -132,7 +134,7 @@ class Publisher
         try {
             return $this->redis->zcard($queueName);
         } catch (\Exception $e) {
-            error_log("Redis getJobCount error for queue {$queueName}: " . $e->getMessage());
+            $this->logger->error("Job count error", ["queue" => $queueName, "error" => $e->getMessage()]);
             return 0;
         }
     }
@@ -162,7 +164,7 @@ class Publisher
 
             return array_unique($queueNames);
         } catch (\Exception $e) {
-            error_log("Redis getQueueNames error: " . $e->getMessage());
+            $this->logger->error("Get queue names error", ["error" => $e->getMessage()]);
             return [];
         }
     }
@@ -177,7 +179,7 @@ class Publisher
 
             return $removed > 0;
         } catch (\Exception $e) {
-            error_log("Redis deleteJob error for job {$jobId}: " . $e->getMessage());
+            $this->logger->error("Delete job error", ["job_id" => $jobId, "error" => $e->getMessage()]);
             return false;
         }
     }
@@ -195,13 +197,13 @@ class Publisher
 
             $decodedData = json_decode($jobData, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                error_log("JSON decode error for job {$jobId}: " . json_last_error_msg());
+                $this->logger->error("JSON decode error", ["job_id" => $jobId, "error" => json_last_error_msg()]);
                 return null;
             }
 
             return Job::fromArray($decodedData);
         } catch (\Exception $e) {
-            error_log("Redis getJob error for job {$jobId}: " . $e->getMessage());
+            $this->logger->error("Get job error", ["job_id" => $jobId, "error" => $e->getMessage()]);
             return null;
         }
     }
@@ -279,7 +281,7 @@ class Publisher
 
             $this->redis->hset($queueName . ':jobs', $job->getId(), $jobData);
         } catch (\Exception $e) {
-            error_log("Redis addJobToQueue error for job {$job->getId()}: " . $e->getMessage());
+            $this->logger->error("Add job to queue error", ["job_id" => $job->getId(), "error" => $e->getMessage()]);
             throw $e;
         }
     }

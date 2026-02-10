@@ -27,6 +27,32 @@ class RedisConnection
         return self::$instances[$hash];
     }
 
+    /**
+     * Remove a specific instance from the pool
+     */
+    public static function removeInstance(array $config): void
+    {
+        $hash = md5(serialize($config));
+
+        if (isset(self::$instances[$hash])) {
+            self::$instances[$hash]->client->disconnect();
+            unset(self::$instances[$hash]);
+        }
+    }
+
+    /**
+     * Remove all instances from the pool (useful for long-running workers)
+     */
+    public static function resetAll(): void
+    {
+        foreach (self::$instances as $instance) {
+            if ($instance->client) {
+                $instance->client->disconnect();
+            }
+        }
+        self::$instances = [];
+    }
+
     private function connect(): void
     {
         $redisConfig = [
@@ -59,10 +85,12 @@ class RedisConnection
             if (!isset($redisConfig['parameters'])) {
                 $redisConfig['parameters'] = [];
             }
+
+            $sslConfig = $this->config['ssl'] ?? [];
             $redisConfig['parameters']['ssl'] = [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-                'allow_self_signed' => true,
+                'verify_peer' => $sslConfig['verify_peer'] ?? true,
+                'verify_peer_name' => $sslConfig['verify_peer_name'] ?? true,
+                'allow_self_signed' => $sslConfig['allow_self_signed'] ?? false,
                 'crypto_method' => STREAM_CRYPTO_METHOD_TLS_CLIENT
             ];
         }

@@ -23,22 +23,17 @@ class ConsumerTest
     
     public function __construct()
     {
-        // Real Upstash Redis configuration
+        // Redis configuration from environment variables
         $this->config = new class extends \StieTotalWin\RedisQueue\Config\RedisQueue {
             public function __construct() {
-                $this->scheme = 'tls';
-                $this->host = 'trusting-monitor-43059.upstash.io';
-                $this->port = 6379;
-                $this->user = 'default';
-                $this->password = 'AagzAAIjcDE1MDRiODhhMzc5Y2U0OThmYTQxNjIwNzM4MTJhMWI0MXAxMA';
+                $this->scheme = getenv('REDIS_SCHEME') ?: 'tcp';
+                $this->host = getenv('REDIS_HOST') ?: '127.0.0.1';
+                $this->port = (int) (getenv('REDIS_PORT') ?: 6379);
+                $this->user = getenv('REDIS_USER') ?: null;
+                $this->password = getenv('REDIS_PASSWORD') ?: null;
                 $this->parameters = [
                     'timeout' => 30,
                     'read_write_timeout' => 30,
-                    'ssl' => [
-                        'verify_peer' => false,
-                        'verify_peer_name' => false,
-                        'allow_self_signed' => true
-                    ]
                 ];
             }
         };

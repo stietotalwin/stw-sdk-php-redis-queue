@@ -7,12 +7,39 @@ class Consumer
     private $redis;
     private $redisConnection;
     private $detailedLogging = false;
+    private $logger;
+    private $shouldStop = false;
 
-    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config)
+    public function __construct(\StieTotalWin\RedisQueue\Config\RedisQueue $config, LoggerInterface $logger = null)
     {
         $redisConfig = $config->getRedisConfig();
         $this->redisConnection = RedisConnection::getInstance($redisConfig);
         $this->redis = $this->redisConnection->getClient();
+        $this->logger = $logger ?? new DefaultLogger();
+    }
+
+    /**
+     * Signal the consumer to stop gracefully after current job
+     */
+    public function stop(): void
+    {
+        $this->shouldStop = true;
+    }
+
+    /**
+     * Check if the consumer has been signaled to stop
+     */
+    public function shouldStop(): bool
+    {
+        return $this->shouldStop;
+    }
+
+    /**
+     * Reset the stop signal
+     */
+    public function resetStop(): void
+    {
+        $this->shouldStop = false;
     }
 
     public function consume(string $queueName, int $timeout = 0): ?Job
@@ -409,12 +436,12 @@ class Consumer
                 $this->redis->zadd($queueName, [$jobId => $currentTime]);
                 $this->redis->zrem($queueName . ':processing', $jobId);
                 $recoveryStats['stuck_jobs_recovered']++;
-                error_log("RECOVERY: Stuck job {$jobId} moved back to main queue");
+                $this->logger->info("Stuck job moved back to main queue", ["job_id" => $jobId]);
             } else {
                 // Job data missing, remove from processing
                 $this->redis->zrem($queueName . ':processing', $jobId);
                 $recoveryStats['corrupted_jobs_removed']++;
-                error_log("RECOVERY: Corrupted job {$jobId} removed from processing queue");
+                $this->logger->warning("Corrupted job removed from processing queue", ["job_id" => $jobId]);
             }
         }
 
@@ -442,7 +469,7 @@ class Consumer
                         $this->redis->zadd($queueName, [$jobId => $currentTime]);
                         $this->redis->lrem($queueName . ':lost', 1, $lostJobData);
                         $recoveryStats['lost_jobs_restored']++;
-                        error_log("RECOVERY: Lost job {$jobId} restored to main queue");
+                        $this->logger->info("Lost job restored to main queue", ["job_id" => $jobId]);
                         $processedInBatch++;
                     }
                 }
@@ -464,7 +491,7 @@ class Consumer
         } while (true);
 
         if (array_sum($recoveryStats) > 0) {
-            error_log("RECOVERY COMPLETE for queue {$queueName}: " . json_encode($recoveryStats));
+            $this->logger->info("Recovery complete", ["queue" => $queueName, "stats" => $recoveryStats]);
         }
 
         $this->checkMemoryUsage('recovery end');
@@ -518,12 +545,21 @@ class Consumer
             return;
         }
 
-        $logMessage = "[{$type}] {$message}";
-        if (!empty($context)) {
-            $logMessage .= " | Context: " . json_encode($context);
+        switch ($type) {
+            case 'ERROR':
+                $this->logger->error($message, $context);
+                break;
+            case 'MEMORY_WARNING':
+            case 'JOB_LOST':
+                $this->logger->warning($message, $context);
+                break;
+            case 'RECOVERY':
+                $this->logger->notice($message, $context);
+                break;
+            default:
+                $this->logger->debug($message, $context);
+                break;
         }
-
-        error_log($logMessage);
     }
 
     /**
@@ -648,7 +684,7 @@ class Consumer
         $this->checkMemoryUsage('comprehensive cleanup end');
         
         if ($stats['job_data_cleaned'] > 0) {
-            error_log("CLEANUP STATS for queue {$queueName}: " . json_encode($stats));
+            $this->logger->info("Cleanup complete", ["queue" => $queueName, "stats" => $stats]);
         }
 
         return $stats;
@@ -764,7 +800,7 @@ class Consumer
         } while ($cursor !== '0');
 
         if ($recoveredCount > 0) {
-            error_log("QUEUE RECOVERY: Restored $recoveredCount jobs to queue $queueName");
+            $this->logger->info("Queue recovery restored jobs", ["queue" => $queueName, "count" => $recoveredCount]);
         }
 
         return $recoveredCount > 0;
