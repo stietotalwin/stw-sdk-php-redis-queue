@@ -55,6 +55,12 @@ class RedisConnection
 
     private function connect(): void
     {
+        // If redis_url exists, use it directly (tcp)
+        if (!empty($this->config['redis_url'])) {
+            $this->client = new Client($this->config['redis_url']);
+            return;
+        }
+
         $redisConfig = [
             'scheme' => $this->config['scheme'] ?? 'tcp',
             'host' => $this->config['host'] ?? '127.0.0.1',

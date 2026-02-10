@@ -10,6 +10,14 @@ use CodeIgniter\Config\BaseConfig;
 class RedisQueue extends BaseConfig
 {
     /**
+     * Redis connection URL (e.g. tcp://127.0.0.1:6379).
+     * When set, scheme/host/port/user/password are ignored.
+     *
+     * @var string|null
+     */
+    public $redis_url = null;
+
+    /**
      * Redis connection scheme (tcp, tls, unix)
      *
      * @var string
@@ -114,6 +122,10 @@ class RedisQueue extends BaseConfig
      */
     public function getRedisConfig(): array
     {
+        if (!empty($this->redis_url)) {
+            return ['redis_url' => $this->redis_url];
+        }
+
         $config = [
             'scheme' => $this->scheme,
             'host' => $this->host,
