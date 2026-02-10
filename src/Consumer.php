@@ -56,9 +56,26 @@ class Consumer
         try {
             $result = $this->redis->bzpopmin([$queueName], $timeout);
         } catch (\Exception $e) {
-            // Predis throws when BZPOPMIN times out (nil response)
-            // This is expected behavior - no jobs available
-            return null;
+            $message = $e->getMessage();
+
+            // Predis throws array_shift() error when BZPOPMIN times out (nil response)
+            // This is a known Predis bug — treat as normal timeout (no jobs available)
+            if (strpos($message, 'array_shift()') !== false) {
+                $this->log("DEBUG", "BZPOPMIN timeout (no jobs in queue)", [
+                    'queue' => $queueName,
+                    'timeout' => $timeout
+                ]);
+                return null;
+            }
+
+            // Any other exception is a real error — log and re-throw
+            $this->log("ERROR", "BZPOPMIN failed with unexpected error", [
+                'queue' => $queueName,
+                'timeout' => $timeout,
+                'error' => $message,
+                'exception_class' => get_class($e)
+            ]);
+            throw $e;
         }
 
         if ($result === null || empty($result) || !is_array($result)) {
