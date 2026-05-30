@@ -49,34 +49,9 @@ class Consumer
 
         $currentTime = time();
         
-        // For blocking operation, we need to use bzpopmin outside Lua
-        // but we can make the validation and processing atomic
-        // Wrap in try-catch to handle Predis bug where BZPOPMIN timeout
-        // returns null and triggers array_shift() error in parseResponse()
-        try {
-            $result = $this->redis->bzpopmin([$queueName], $timeout);
-        } catch (\Exception $e) {
-            $message = $e->getMessage();
-
-            // Predis throws array_shift() error when BZPOPMIN times out (nil response)
-            // This is a known Predis bug — treat as normal timeout (no jobs available)
-            if (strpos($message, 'array_shift()') !== false) {
-                $this->log("DEBUG", "BZPOPMIN timeout (no jobs in queue)", [
-                    'queue' => $queueName,
-                    'timeout' => $timeout
-                ]);
-                return null;
-            }
-
-            // Any other exception is a real error — log and re-throw
-            $this->log("ERROR", "BZPOPMIN failed with unexpected error", [
-                'queue' => $queueName,
-                'timeout' => $timeout,
-                'error' => $message,
-                'exception_class' => get_class($e)
-            ]);
-            throw $e;
-        }
+        // Execute BZPOPMIN raw to avoid Predis parsing null timeout responses
+        // through BZPOPBase::parseResponse(), which can trigger PHP warnings.
+        $result = $this->blockingPopMin($queueName, $timeout);
 
         if ($result === null || empty($result) || !is_array($result)) {
             return null;
@@ -230,6 +205,76 @@ class Consumer
             
             return null;
         }
+    }
+
+    private function blockingPopMin(string $queueName, int $timeout): ?array
+    {
+        $error = false;
+
+        try {
+            $command = $this->redis->createCommand('BZPOPMIN', [[$queueName], $timeout]);
+            $arguments = $command->getArguments();
+            array_unshift($arguments, 'BZPOPMIN');
+
+            $result = $this->redis->executeRaw($arguments, $error);
+        } catch (\Exception $e) {
+            $this->log("ERROR", "BZPOPMIN failed with unexpected error", [
+                'queue' => $queueName,
+                'timeout' => $timeout,
+                'error' => $e->getMessage(),
+                'exception_class' => get_class($e)
+            ]);
+            throw $e;
+        }
+
+        if ($error) {
+            $message = (string) $result;
+            $this->log("ERROR", "BZPOPMIN returned Redis error", [
+                'queue' => $queueName,
+                'timeout' => $timeout,
+                'error' => $message
+            ]);
+            throw new \RuntimeException('BZPOPMIN failed: ' . $message);
+        }
+
+        if ($result === null || $result === [null]) {
+            $this->log("DEBUG", "BZPOPMIN timeout (no jobs in queue)", [
+                'queue' => $queueName,
+                'timeout' => $timeout
+            ]);
+            return null;
+        }
+
+        if (!is_array($result) || count($result) < 3) {
+            $this->log("ERROR", "BZPOPMIN returned malformed response", [
+                'queue' => $queueName,
+                'timeout' => $timeout,
+                'response' => $result
+            ]);
+            return null;
+        }
+
+        $actualQueueName = $arguments[1] ?? $queueName;
+        $returnedQueueName = $result[0];
+        $jobId = $result[1];
+        $score = $result[2];
+
+        if ($returnedQueueName !== $actualQueueName || empty($jobId) || !is_numeric($score)) {
+            $this->log("ERROR", "BZPOPMIN returned unexpected response", [
+                'queue' => $queueName,
+                'actual_queue' => $actualQueueName,
+                'returned_queue' => $returnedQueueName,
+                'job_id' => $jobId,
+                'score' => $score
+            ]);
+            return null;
+        }
+
+        return [
+            $queueName => [
+                (string) $jobId => $score
+            ]
+        ];
     }
 
     public function markCompleted(string $jobId, string $queueName): bool
