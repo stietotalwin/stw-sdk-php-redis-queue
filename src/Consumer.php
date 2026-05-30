@@ -310,12 +310,13 @@ class Consumer
 
             $this->redis->zrem($queueName . ':processing', $jobId);
             $this->redis->zadd($queueName, [$job->getId() => $job->getProcessAt()]);
+            $this->updateJobData($job, $queueName);
         } else {
             $this->redis->lpush($queueName . ':failed', [json_encode($job->toArray())]);
             $this->redis->zrem($queueName . ':processing', $jobId);
+            $this->redis->hdel($queueName . ':jobs', [$jobId]);
         }
 
-        $this->updateJobData($job, $queueName);
         // Clean up missing attempts counter if it exists
         $this->redis->hdel($queueName . ':missing_attempts', [$jobId]);
 
@@ -856,6 +857,12 @@ class Consumer
                     continue;
                 }
 
+                if ($this->isTerminalFailedJob($job)) {
+                    $this->redis->hdel($jobsHashKey, [$jobId]);
+                    $this->redis->hdel($queueName . ':missing_attempts', [$jobId]);
+                    continue;
+                }
+
                 // Use processAt time if available, otherwise use current time
                 $processAt = $job['process_at'] ?? $currentTime;
                 
@@ -874,5 +881,17 @@ class Consumer
         }
 
         return $recoveredCount > 0;
+    }
+
+    private function isTerminalFailedJob(array $job): bool
+    {
+        if (($job['status'] ?? null) !== 'failed') {
+            return false;
+        }
+
+        $attempts = (int) ($job['attempts'] ?? 0);
+        $maxAttempts = (int) ($job['max_attempts'] ?? 3);
+
+        return $attempts >= $maxAttempts;
     }
 }
